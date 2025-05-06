@@ -1,0 +1,18 @@
+# Ensure consistent line endings
+* text=auto
+
+# Rust files - always use LF
+*.rs text eol=lf
+
+# TOML and Markdown - LF
+*.toml text eol=lf
+*.md text eol=lf
+
+# Shell scripts - LF
+*.sh text eol=lf
+
+# Windows batch files - CRLF
+*.bat text eol=crlf
+
+# Icon files - binary
+*.png binary

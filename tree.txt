@@ -1,0 +1,29 @@
+sleep-timer-gui/
+├── src/
+│   ├── main.rs
+│   ├── tray.rs
+│   ├── log.rs
+│   └── autostart.rs
+├── AppDir/
+│   └── usr/
+│       └── share/
+│           └── applications/
+│               └── sleep_timer.desktop
+├── .github/
+│   └── workflows/
+│       └── release.yml
+├── .vscode/
+│   └── settings.json
+├── docs/
+│   ├── index.md
+│   ├── icon.png
+│   └── screenshot.png（※あれば）
+├── icon.png
+├── SleepTimerInstaller.iss
+├── Cargo.toml
+├── Cargo.lock
+├── LICENSE
+├── CHANGELOG.md
+├── README.md
+├── .gitignore
+├── .gitattributes
