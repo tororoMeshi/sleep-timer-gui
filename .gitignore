@@ -2,6 +2,8 @@
 **/target/
 /**/*.rs.bk
 
+**/appimagetool.AppDir/
+
 # IDE
 .idea/
 .vscode/

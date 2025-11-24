@@ -1,10 +1,15 @@
-use iced::time;
-use iced::widget::{button, column, container, row, text, text_input, Space};
-use iced::widget::text::Style as TextStyle;
-use iced::{application, Element, Length, Subscription, Task, Theme};
 use iced::alignment::{Horizontal, Vertical};
+use iced::time;
+use iced::widget::text::Style as TextStyle;
+use iced::widget::{button, column, container, row, text, text_input, Space};
 use iced::Color;
+use iced::{application, Element, Length, Subscription, Task, Theme};
 use std::process::Command;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex,
+};
+use std::thread;
 use std::time::Duration;
 
 #[derive(Debug, Clone)]
@@ -21,6 +26,7 @@ struct State {
     remaining_seconds: Option<u32>,
     finished: bool,
     error: Option<String>,
+    sleep_worker: Option<SleepWorker>,
 }
 
 fn initialize() -> (State, Task<Message>) {
@@ -31,6 +37,7 @@ fn initialize() -> (State, Task<Message>) {
             remaining_seconds: None,
             finished: false,
             error: None,
+            sleep_worker: None,
         },
         Task::none(),
     )
@@ -46,19 +53,23 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
             state.minutes_input = value;
             state.error = None;
         }
-        Message::StartPressed => match parse_total_seconds(&state.hours_input, &state.minutes_input) {
-            Ok(total) if total > 0 => {
-                state.remaining_seconds = Some(total);
-                state.finished = false;
-                state.error = None;
+        Message::StartPressed => {
+            match parse_total_seconds(&state.hours_input, &state.minutes_input) {
+                Ok(total) if total > 0 => {
+                    state.remaining_seconds = Some(total);
+                    state.finished = false;
+                    state.error = None;
+
+                    state.start_sleep_worker(total);
+                }
+                Ok(_) => {
+                    state.error = Some("Please enter a duration greater than zero.".into());
+                }
+                Err(msg) => {
+                    state.error = Some(msg);
+                }
             }
-            Ok(_) => {
-                state.error = Some("Please enter a duration greater than zero.".into());
-            }
-            Err(msg) => {
-                state.error = Some(msg);
-            }
-        },
+        }
         Message::Tick => {
             if let Some(remaining) = state.remaining_seconds {
                 if remaining > 1 {
@@ -66,11 +77,12 @@ fn update(state: &mut State, message: Message) -> Task<Message> {
                 } else {
                     state.remaining_seconds = None;
                     state.finished = true;
+                }
+            }
 
-                    match trigger_system_sleep() {
-                        Ok(()) => state.error = None,
-                        Err(msg) => state.error = Some(msg),
-                    }
+            if let Some(worker) = &state.sleep_worker {
+                if let Some(err) = worker.take_error() {
+                    state.error = Some(err);
                 }
             }
         }
@@ -203,4 +215,67 @@ fn trigger_system_sleep() -> Result<(), String> {
     } else {
         Err(format!("systemctl suspend exited with status: {status}"))
     }
+}
+
+impl State {
+    fn start_sleep_worker(&mut self, seconds: u32) {
+        if let Some(worker) = self.sleep_worker.take() {
+            worker.cancel();
+        }
+
+        self.sleep_worker = Some(SleepWorker::spawn(Duration::from_secs(seconds as u64)));
+    }
+}
+
+struct SleepWorker {
+    cancel: Arc<AtomicBool>,
+    error: Arc<Mutex<Option<String>>>,
+}
+
+impl SleepWorker {
+    fn spawn(duration: Duration) -> Self {
+        let cancel = Arc::new(AtomicBool::new(false));
+        let error = Arc::new(Mutex::new(None));
+        let cancel_clone = Arc::clone(&cancel);
+        let error_clone = Arc::clone(&error);
+
+        thread::spawn(move || {
+            if wait_or_cancel(duration, &cancel_clone) {
+                return;
+            }
+
+            if let Err(err) = trigger_system_sleep() {
+                if let Ok(mut slot) = error_clone.lock() {
+                    *slot = Some(err);
+                }
+            }
+        });
+
+        Self { cancel, error }
+    }
+
+    fn cancel(self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+
+    fn take_error(&self) -> Option<String> {
+        self.error.lock().ok().and_then(|mut slot| slot.take())
+    }
+}
+
+fn wait_or_cancel(duration: Duration, cancel_flag: &Arc<AtomicBool>) -> bool {
+    let mut remaining = duration;
+
+    while remaining > Duration::from_secs(0) {
+        if cancel_flag.load(Ordering::Relaxed) {
+            return true;
+        }
+
+        let sleep_for = remaining.min(Duration::from_secs(1));
+        thread::sleep(sleep_for);
+
+        remaining = remaining.saturating_sub(sleep_for);
+    }
+
+    cancel_flag.load(Ordering::Relaxed)
 }
